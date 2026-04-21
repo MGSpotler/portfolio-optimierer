@@ -1,0 +1,76 @@
+symbol,name,isin,asset_type,source,traderepublic_de
+AAPL,Apple Inc.,US0378331005,Aktie,TR_DE,True
+MSFT,Microsoft Corp.,US5949181045,Aktie,TR_DE,True
+NVDA,Nvidia Corp.,US67066G1040,Aktie,TR_DE,True
+TSLA,Tesla Inc.,US88160R1014,Aktie,TR_DE,True
+AMZN,Amazon.com Inc.,US0231351067,Aktie,TR_DE,True
+GOOGL,Alphabet Inc. Class A,US02079K3059,Aktie,TR_DE,True
+META,Meta Platforms Inc.,US30303M1027,Aktie,TR_DE,True
+AMD,Advanced Micro Devices Inc.,US0079031078,Aktie,TR_DE,True
+NFLX,Netflix Inc.,US64110L1061,Aktie,TR_DE,True
+PLTR,Palantir Technologies Inc.,US69608A1088,Aktie,TR_DE,True
+AVGO,Broadcom Inc.,US11135F1012,Aktie,TR_DE,True
+TSM,Taiwan Semiconductor Manufacturing Co. Ltd.,US8740391003,Aktie,TR_DE,True
+ASML,ASML Holding N.V.,NL0010273215,Aktie,TR_DE,True
+NVO,Novo Nordisk A/S,DK0062498333,Aktie,TR_DE,True
+MC.PA,LVMH Moet Hennessy Louis Vuitton SE,FR0000121014,Aktie,TR_DE,True
+OR.PA,L'Oreal S.A.,FR0000120321,Aktie,TR_DE,True
+AIR.PA,Airbus SE,NL0000235190,Aktie,TR_DE,True
+SAP.DE,SAP SE,DE0007164600,Aktie,TR_DE,True
+SIE.DE,Siemens AG,DE0007236101,Aktie,TR_DE,True
+ALV.DE,Allianz SE,DE0008404005,Aktie,TR_DE,True
+DTE.DE,Deutsche Telekom AG,DE0005557508,Aktie,TR_DE,True
+RHM.DE,Rheinmetall AG,DE0007030009,Aktie,TR_DE,True
+MBG.DE,Mercedes-Benz Group AG,DE0007100000,Aktie,TR_DE,True
+VOW3.DE,Volkswagen AG Vz.,DE0007664039,Aktie,TR_DE,True
+BMW.DE,BMW AG,DE0005190003,Aktie,TR_DE,True
+BAS.DE,BASF SE,DE000BASF111,Aktie,TR_DE,True
+ADS.DE,adidas AG,DE000A1EWWW0,Aktie,TR_DE,True
+DHL.DE,DHL Group,DE0005552004,Aktie,TR_DE,True
+BAYN.DE,Bayer AG,DE000BAY0017,Aktie,TR_DE,True
+IFX.DE,Infineon Technologies AG,DE0006231004,Aktie,TR_DE,True
+SHEL,Shell plc,GB00BP6MXD84,Aktie,TR_DE,True
+BP,BP p.l.c.,GB0007980591,Aktie,TR_DE,True
+JPM,JPMorgan Chase & Co.,US46625H1005,Aktie,TR_DE,True
+V,Visa Inc.,US92826C8394,Aktie,TR_DE,True
+MA,Mastercard Inc.,US57636Q1040,Aktie,TR_DE,True
+KO,The Coca-Cola Company,US1912161007,Aktie,TR_DE,True
+MCD,McDonald's Corporation,US5801351017,Aktie,TR_DE,True
+DIS,The Walt Disney Company,US2546871060,Aktie,TR_DE,True
+NKE,Nike Inc.,US6541061031,Aktie,TR_DE,True
+COIN,Coinbase Global Inc.,US19260Q1076,Aktie,TR_DE,True
+RIOT,Riot Platforms Inc.,US7672921050,Aktie,TR_DE,True
+MSTR,MicroStrategy Incorporated,US5949724083,Aktie,TR_DE,True
+BYDDY,BYD Co. Ltd.,,Aktie,TR_DE,True
+NIO,NIO Inc.,US62914V1061,Aktie,TR_DE,True
+XIAOMI.HK,Xiaomi Corp.,KYG9830T1067,Aktie,TR_DE,True
+
+IWDA.AS,iShares Core MSCI World UCITS ETF,IE00B4L5Y983,ETF,TR_DE,True
+EIMI.L,iShares Core MSCI EM IMI UCITS ETF,,ETF,TR_DE,True
+VUSA.AS,Vanguard S&P 500 UCITS ETF,IE00B3XXRP09,ETF,TR_DE,True
+VWCE.DE,Vanguard FTSE All-World UCITS ETF USD Acc,IE00BK5BQT80,ETF,TR_DE,True
+SXR8.DE,iShares Core S&P 500 UCITS ETF USD Acc,IE00B5BMR087,ETF,TR_DE,True
+IUSQ.DE,iShares MSCI ACWI UCITS ETF USD Acc,IE00B6R52259,ETF,TR_DE,True
+QDVE.DE,iShares S&P 500 Information Technology Sector UCITS ETF,IE00B3WJKG14,ETF,TR_DE,True
+A2PKXG.DE,Vanguard FTSE All-World UCITS ETF Dist,IE00B3RBWM25,ETF,TR_DE,True
+VUAA.DE,Vanguard S&P 500 UCITS ETF USD Acc,IE00BFMXXD54,ETF,TR_DE,True
+CSPX.L,iShares Core S&P 500 UCITS ETF USD Acc,IE00B5BMR087,ETF,TR_DE,True
+EUNL.DE,iShares Core MSCI World UCITS ETF USD Acc,IE00B4L5Y983,ETF,TR_DE,True
+IQQH.DE,iShares Global Clean Energy UCITS ETF,IE00B1XNHC34,ETF,TR_DE,True
+SXRV.DE,iShares Nasdaq 100 UCITS ETF USD Acc,IE00B53SZB19,ETF,TR_DE,True
+EXS1.DE,iShares STOXX Europe 600 UCITS ETF (DE),DE0002635307,ETF,TR_DE,True
+
+BTC-USD,Bitcoin,,Krypto,TR_DE,True
+ETH-USD,Ethereum,,Krypto,TR_DE,True
+SOL-USD,Solana,,Krypto,TR_DE,True
+XRP-USD,XRP,,Krypto,TR_DE,True
+ADA-USD,Cardano,,Krypto,TR_DE,True
+DOGE-USD,Dogecoin,,Krypto,TR_DE,True
+DOT-USD,Polkadot,,Krypto,TR_DE,True
+LINK-USD,Chainlink,,Krypto,TR_DE,True
+AVAX-USD,Avalanche,,Krypto,TR_DE,True
+LTC-USD,Litecoin,,Krypto,TR_DE,True
+BCH-USD,Bitcoin Cash,,Krypto,TR_DE,True
+MATIC-USD,Polygon,,Krypto,TR_DE,True
+ATOM-USD,Cosmos,,Krypto,TR_DE,True
+UNI7083-USD,Uniswap,,Krypto,TR_DE,True
