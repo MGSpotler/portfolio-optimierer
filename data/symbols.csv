@@ -1,0 +1,13 @@
+symbol,name,asset_type
+AAPL,Apple,Aktie
+MSFT,Microsoft,Aktie
+NVDA,Nvidia,Aktie
+TSLA,Tesla,Aktie
+BYDDY,BYD,Aktie
+BTC-USD,Bitcoin,Krypto
+ETH-USD,Ethereum,Krypto
+IWDA.AS,iShares Core MSCI World ETF,ETF
+ARKK,ARK Innovation ETF,ETF
+UNP,Union Pacific,Aktie
+AVGO,Broadcom,Aktie
+EIMI.L,iShares Core Emerging Markets IMI ETF,ETF
