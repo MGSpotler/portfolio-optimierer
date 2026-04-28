@@ -1,0 +1,380 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import yfinance as yf
+import matplotlib.pyplot as plt
+
+from utils.asset_resolver import resolve_asset
+
+st.set_page_config(page_title="Portfolio-Check", page_icon="🛡️", layout="wide")
+
+
+# --------------------------------------------------
+# Hilfsfunktionen
+# --------------------------------------------------
+def euro(x: float) -> str:
+    return f"{x:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def percent(x: float) -> str:
+    return f"{x * 100:.2f} %"
+
+
+def download_close_prices(tickers, period="3y"):
+    if not tickers:
+        return pd.DataFrame()
+
+    raw = yf.download(
+        tickers,
+        period=period,
+        auto_adjust=True,
+        progress=False,
+        group_by="column"
+    )
+
+    if raw.empty:
+        return pd.DataFrame()
+
+    if isinstance(raw.columns, pd.MultiIndex):
+        close = raw["Close"].copy()
+    else:
+        close = raw[["Close"]].copy()
+        close.columns = [tickers[0]]
+
+    close = close.sort_index()
+    close = close.dropna(axis=1, how="all")
+    close = close.ffill()
+
+    return close
+
+
+def max_drawdown(return_series: pd.Series) -> float:
+    wealth = (1 + return_series).cumprod()
+    peak = wealth.cummax()
+    drawdown = wealth / peak - 1
+    return float(drawdown.min())
+
+
+def classify_risk(score: float) -> str:
+    if score < 25:
+        return "Sehr niedrig"
+    elif score < 40:
+        return "Niedrig"
+    elif score < 60:
+        return "Mittel"
+    elif score < 75:
+        return "Hoch"
+    return "Sehr hoch"
+
+
+def classify_diversification(num_assets: int, top_weight: float, concentration_norm: float) -> str:
+    if num_assets >= 6 and top_weight < 0.25 and concentration_norm < 0.25:
+        return "Sehr gut"
+    elif num_assets >= 4 and top_weight < 0.35 and concentration_norm < 0.40:
+        return "Solide"
+    elif num_assets >= 3:
+        return "Verbesserungsfähig"
+    return "Schwach"
+
+
+# --------------------------------------------------
+# UI
+# --------------------------------------------------
+st.title("🛡️ Portfolio-Check")
+st.write("Gib dein bestehendes Portfolio ein und erhalte eine Risikoanalyse, Szenario-Prognose und Optimierungsvorschläge.")
+st.caption("Hinweis: Die Auswertung basiert auf historischen Kursdaten und vereinfachten Szenarien. Sie ist keine Finanzberatung.")
+
+if "portfolio_rows" not in st.session_state:
+    st.session_state.portfolio_rows = [
+        {"Asset": "Nvidia", "Betrag": 1000.0},
+        {"Asset": "Amazon", "Betrag": 1500.0},
+        {"Asset": "Bitcoin", "Betrag": 500.0},
+    ]
+
+st.subheader("Portfolio-Eingabe")
+
+editor_df = pd.DataFrame(st.session_state.portfolio_rows)
+
+edited_df = st.data_editor(
+    editor_df,
+    num_rows="dynamic"
+)
+
+st.session_state.portfolio_rows = edited_df.to_dict("records")
+
+analysis_period = st.selectbox(
+    "Datenbasis für die Analyse",
+    ["1y", "3y", "5y"],
+    index=1
+)
+
+if st.button("Portfolio analysieren"):
+    df = edited_df.copy()
+
+    df["Asset"] = df["Asset"].astype(str).str.strip()
+    df["Betrag"] = pd.to_numeric(df["Betrag"], errors="coerce")
+    df = df[(df["Asset"] != "") & (df["Betrag"].notna()) & (df["Betrag"] > 0)]
+
+    if df.empty:
+        st.warning("Bitte gib mindestens eine gültige Position mit positivem Betrag ein.")
+        st.stop()
+
+    # Resolver anwenden
+    resolved_info = df["Asset"].apply(resolve_asset)
+    df["Original_Asset"] = df["Asset"]
+    df["Asset"] = resolved_info.apply(lambda x: x["resolved"] if x["success"] else "")
+    df["Resolve_Method"] = resolved_info.apply(lambda x: x["method"])
+    unresolved_assets = resolved_info[resolved_info.apply(lambda x: not x["success"])] \
+        .apply(lambda x: x["input"]).tolist()
+
+    df = df[df["Asset"] != ""]
+
+    if unresolved_assets:
+        st.warning(
+            "Diese Eingaben konnten nicht eindeutig erkannt werden und wurden ignoriert: "
+            + ", ".join(unresolved_assets)
+        )
+
+    if df.empty:
+        st.error("Es konnten keine gültigen Assets erkannt werden.")
+        st.stop()
+
+    # Doppelte zusammenfassen
+    df = df.groupby("Asset", as_index=False)["Betrag"].sum()
+
+    tickers = df["Asset"].tolist()
+    total_value = float(df["Betrag"].sum())
+
+    with st.spinner("Marktdaten werden geladen und analysiert..."):
+        prices = download_close_prices(tickers, period=analysis_period)
+
+    if prices.empty:
+        st.error("Für die eingegebenen Ticker konnten keine Kursdaten geladen werden.")
+        st.stop()
+
+    valid_tickers = [t for t in tickers if t in prices.columns]
+    invalid_tickers = [t for t in tickers if t not in valid_tickers]
+
+    if invalid_tickers:
+        st.warning(
+            "Diese Assets konnten bei yfinance nicht verarbeitet werden und wurden ignoriert: "
+            + ", ".join(invalid_tickers)
+        )
+
+    df = df[df["Asset"].isin(valid_tickers)].copy()
+    prices = prices[valid_tickers].copy()
+    prices = prices.dropna(axis=1, how="all")
+    prices = prices.ffill()
+
+    if df.empty or prices.empty or len(valid_tickers) < 2:
+        st.error("Es müssen mindestens 2 gültige Assets für die Analyse übrig bleiben.")
+        st.stop()
+
+    returns = prices.pct_change(fill_method=None).dropna(how="all")
+    returns = returns.loc[:, returns.notna().any()]
+
+    if returns.empty or len(returns.columns) < 2:
+        st.error("Es konnten keine Renditedaten berechnet werden.")
+        st.stop()
+
+    # Gewichte
+    weights = df.set_index("Asset")["Betrag"] / df["Betrag"].sum()
+    aligned_weights = weights.reindex(returns.columns).fillna(0.0)
+
+    portfolio_returns = returns.mul(aligned_weights, axis=1).sum(axis=1)
+
+    annual_return = float(portfolio_returns.mean() * 252)
+    annual_vol = float(portfolio_returns.std() * np.sqrt(252))
+    mdd = max_drawdown(portfolio_returns)
+
+    # Konzentration / Diversifikation
+    weight_values = aligned_weights.values
+    num_assets = len(weight_values)
+    hhi = float(np.sum(weight_values ** 2))
+
+    if num_assets > 1:
+        concentration_norm = (hhi - 1 / num_assets) / (1 - 1 / num_assets)
+    else:
+        concentration_norm = 1.0
+
+    top_weights = aligned_weights.sort_values(ascending=False)
+    top_asset = top_weights.index[0]
+    top_weight = float(top_weights.iloc[0])
+    top_2_weight = float(top_weights.head(2).sum())
+
+    crypto_assets = {"BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "ADA-USD"}
+    crypto_share = float(
+        aligned_weights[[a.upper() in crypto_assets for a in aligned_weights.index]].sum()
+    )
+
+    vol_score = min(annual_vol / 0.40, 1.0) * 100
+    concentration_score = concentration_norm * 100
+    crypto_score = min(crypto_share / 0.35, 1.0) * 100
+    top_position_score = min(top_weight / 0.50, 1.0) * 100
+
+    risk_score = (
+        0.45 * vol_score
+        + 0.25 * concentration_score
+        + 0.15 * crypto_score
+        + 0.15 * top_position_score
+    )
+
+    risk_label = classify_risk(risk_score)
+    diversification_label = classify_diversification(num_assets, top_weight, concentration_norm)
+
+    # Szenario-Prognosen
+    base_rate = float(np.clip(annual_return, -0.12, 0.18))
+    conservative_rate = float(np.clip(base_rate - 0.60 * annual_vol, -0.25, 0.10))
+    optimistic_rate = float(np.clip(base_rate + 0.60 * annual_vol, -0.05, 0.30))
+
+    horizons = {
+        "1 Monat": 1 / 12,
+        "3 Monate": 3 / 12,
+        "6 Monate": 6 / 12,
+        "1 Jahr": 1,
+        "2 Jahre": 2,
+        "5 Jahre": 5,
+        "10 Jahre": 10,
+        "30 Jahre": 30,
+    }
+
+    scenario_rows = []
+    for label, years in horizons.items():
+        scenario_rows.append({
+            "Zeitraum": label,
+            "Defensives Szenario": total_value * ((1 + conservative_rate) ** years),
+            "Basisszenario": total_value * ((1 + base_rate) ** years),
+            "Optimistisches Szenario": total_value * ((1 + optimistic_rate) ** years),
+        })
+
+    scenario_df = pd.DataFrame(scenario_rows)
+
+    # --------------------------------------------------
+    # Ausgabe
+    # --------------------------------------------------
+    st.divider()
+    st.subheader("Sofortübersicht")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Gesamtwert", euro(total_value))
+    c2.metric("Positionen", str(num_assets))
+    c3.metric("Risikostufe", risk_label)
+    c4.metric("Diversifikation", diversification_label)
+
+    with st.expander("Erkannte Assets / Ticker anzeigen"):
+        st.write(valid_tickers)
+
+    st.divider()
+    st.subheader("Portfolio-Struktur")
+
+    left, right = st.columns([1, 1])
+
+    with left:
+        structure_df = df.copy()
+        structure_df["Gewichtung"] = structure_df["Betrag"] / df["Betrag"].sum()
+        structure_df["Gewichtung"] = structure_df["Gewichtung"].apply(percent)
+        structure_df["Betrag"] = structure_df["Betrag"].apply(euro)
+
+        st.dataframe(structure_df, hide_index=True)
+
+    with right:
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.pie(
+            aligned_weights.values,
+            labels=aligned_weights.index,
+            autopct="%1.1f%%",
+            startangle=90
+        )
+        ax.axis("equal")
+        st.pyplot(fig)
+
+    st.divider()
+    st.subheader("Kennzahlen")
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Erwartete Jahresrendite", percent(annual_return))
+    k2.metric("Jahresvolatilität", percent(annual_vol))
+    k3.metric("Max. Drawdown", percent(mdd))
+    k4.metric("Größte Position", f"{top_asset} ({percent(top_weight)})")
+
+    st.progress(min(max(risk_score / 100, 0.0), 1.0))
+    st.caption(f"Interner Risikoscore: {risk_score:.1f} / 100")
+
+    st.divider()
+    st.subheader("Szenario-Prognose")
+
+    display_scenario_df = scenario_df.copy()
+    for col in ["Defensives Szenario", "Basisszenario", "Optimistisches Szenario"]:
+        display_scenario_df[col] = display_scenario_df[col].apply(euro)
+
+    st.dataframe(display_scenario_df, hide_index=True)
+
+    chart_df = scenario_df.set_index("Zeitraum")
+    st.line_chart(chart_df)
+
+    st.divider()
+    st.subheader("Textliche Risikoeinschätzung")
+
+    risk_text = []
+    risk_text.append(f"Dein Portfolio wird aktuell als **{risk_label.lower()}es Risiko** eingestuft.")
+    risk_text.append(f"Die größte Position ist **{top_asset}** mit einem Anteil von **{percent(top_weight)}** am Gesamtportfolio.")
+
+    if crypto_share > 0:
+        risk_text.append(
+            f"Der Kryptoanteil liegt bei **{percent(crypto_share)}** und erhöht die Schwankungsanfälligkeit zusätzlich."
+        )
+
+    risk_text.append(
+        f"Die geschätzte annualisierte Volatilität beträgt **{percent(annual_vol)}**, "
+        f"während der historische maximale Rückgang bei **{percent(mdd)}** lag."
+    )
+
+    st.write(" ".join(risk_text))
+
+    st.divider()
+    st.subheader("Optimierungsvorschläge")
+
+    suggestions = []
+
+    if top_weight > 0.35:
+        reduction = max(top_weight - 0.30, 0)
+        suggestions.append(
+            f"Die Position **{top_asset}** ist mit **{percent(top_weight)}** sehr dominant. "
+            f"Eine Reduktion um etwa **{percent(reduction)}** des Gesamtportfolios könnte das Klumpenrisiko senken."
+        )
+
+    if top_2_weight > 0.65:
+        suggestions.append(
+            f"Die zwei größten Positionen machen zusammen **{percent(top_2_weight)}** aus. "
+            f"Das spricht für eine relativ hohe Konzentration. Eine breitere Streuung über zusätzliche Positionen oder ETFs wäre sinnvoll."
+        )
+
+    if crypto_share > 0.20:
+        suggestions.append(
+            f"Der Kryptoanteil von **{percent(crypto_share)}** ist relativ hoch. "
+            f"Falls du dein Gesamtrisiko senken möchtest, könntest du einen Teil davon in breiter diversifizierte Anlagen umschichten."
+        )
+
+    if num_assets < 4:
+        suggestions.append(
+            f"Mit nur **{num_assets}** Position(en) ist dein Portfolio noch recht konzentriert. "
+            f"Mehr Diversifikation kann das Verhältnis von Risiko zu Rendite oft verbessern."
+        )
+
+    if annual_vol > 0.25:
+        suggestions.append(
+            "Die Volatilität des Portfolios ist erhöht. Eine Beimischung stabilerer, breit gestreuter ETFs könnte Schwankungen reduzieren."
+        )
+
+    if mdd < -0.30:
+        suggestions.append(
+            "Der historische maximale Rückgang war deutlich. Es wäre sinnvoll, den Anteil stark schwankender Positionen zu reduzieren."
+        )
+
+    if not suggestions:
+        suggestions.append(
+            "Dein Portfolio wirkt aktuell bereits relativ ausgewogen. Kleinere Anpassungen sollten sich eher an deinem persönlichen Rendite- und Risikoziel orientieren."
+        )
+
+    for i, suggestion in enumerate(suggestions, start=1):
+        st.write(f"**{i}.** {suggestion}")
