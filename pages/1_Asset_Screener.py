@@ -2,259 +2,355 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
+import matplotlib.pyplot as plt
+
+from utils.asset_resolver import resolve_assets
+
+st.set_page_config(page_title="Portfolio-Optimierer", page_icon="📊", layout="wide")
 
 
-st.title("Asset Screener")
-st.write("Suche und bewerte einzelne Assets nach Rendite, Sicherheit und Risiko-Rendite-Verhältnis.")
+# --------------------------------------------------
+# Hilfsfunktionen
+# --------------------------------------------------
+def percent(x: float) -> str:
+    return f"{x * 100:.2f} %"
 
 
-@st.cache_data
-def load_universe():
-    df = pd.read_csv("data/tr_universe_de.csv")
+def euro(x: float) -> str:
+    return f"{x:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
 
-    if "traderepublic_de" in df.columns:
-        df["traderepublic_de"] = (
-            df["traderepublic_de"]
-            .astype(str)
-            .str.strip()
-            .str.lower()
-            .isin(["true", "1", "yes", "ja"])
+
+def download_close_prices(tickers, period="5y"):
+    if not tickers:
+        return pd.DataFrame()
+
+    raw = yf.download(
+        tickers,
+        period=period,
+        auto_adjust=True,
+        progress=False,
+        group_by="column"
+    )
+
+    if raw.empty:
+        return pd.DataFrame()
+
+    if isinstance(raw.columns, pd.MultiIndex):
+        close = raw["Close"].copy()
+    else:
+        close = raw[["Close"]].copy()
+        close.columns = [tickers[0]]
+
+    close = close.sort_index()
+    close = close.dropna(axis=1, how="all")
+    close = close.ffill()
+
+    return close
+
+
+def compute_portfolio_metrics(weights, mean_annual, cov_annual):
+    annual_return = float(np.dot(weights, mean_annual))
+    annual_vol = float(np.sqrt(np.dot(weights.T, np.dot(cov_annual, weights))))
+    sharpe = annual_return / annual_vol if annual_vol > 0 else 0.0
+    return annual_return, annual_vol, sharpe
+
+
+def simulate_portfolios(returns, n_portfolios=10000):
+    n_assets = len(returns.columns)
+    mean_annual = returns.mean().values * 252
+    cov_annual = returns.cov().values * 252
+
+    weights = np.random.dirichlet(np.ones(n_assets), size=n_portfolios)
+
+    portfolio_returns = weights @ mean_annual
+    portfolio_vols = np.sqrt(np.einsum("ij,jk,ik->i", weights, cov_annual, weights))
+    sharpes = np.divide(
+        portfolio_returns,
+        portfolio_vols,
+        out=np.zeros_like(portfolio_returns),
+        where=portfolio_vols > 0
+    )
+
+    sim_df = pd.DataFrame({
+        "return": portfolio_returns,
+        "vol": portfolio_vols,
+        "sharpe": sharpes
+    })
+
+    for i, col in enumerate(returns.columns):
+        sim_df[col] = weights[:, i]
+
+    return sim_df
+
+
+def project_capital(start_value, annual_return, years):
+    return float(start_value * ((1 + annual_return) ** years))
+
+
+def weight_table(asset_names, weights, investment):
+    df = pd.DataFrame({
+        "Asset": asset_names,
+        "Gewichtung": [percent(w) for w in weights],
+        "Betrag": [euro(investment * w) for w in weights]
+    })
+    df = df.sort_values("Betrag", ascending=False)
+    return df
+
+
+def generate_recommendations(strategy_name, weights_series):
+    suggestions = []
+
+    assets_upper = [a.upper() for a in weights_series.index]
+    world_etfs = {"URTH", "VT", "VWCE.DE", "VOO", "VTI", "EUNL.DE"}
+    tech_assets = {"NVDA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "QQQ", "XLK"}
+    crypto_assets = {"BTC-USD", "ETH-USD"}
+
+    top_weight = float(weights_series.max())
+    top_asset = str(weights_series.idxmax())
+    tech_weight = float(weights_series[[a for a in weights_series.index if a.upper() in tech_assets]].sum()) if len(weights_series) else 0.0
+    crypto_weight = float(weights_series[[a for a in weights_series.index if a.upper() in crypto_assets]].sum()) if len(weights_series) else 0.0
+    has_world_etf = any(a in world_etfs for a in assets_upper)
+
+    if strategy_name == "Gleichgewichtet":
+        suggestions.append(
+            "Die gleichgewichtete Variante ist oft ein guter, robuster Startpunkt, wenn du keine einzelne starke Wette eingehen willst."
         )
 
-        df = df[df["traderepublic_de"]].copy()
+    if strategy_name == "Minimales Risiko":
+        suggestions.append(
+            "Die Minimum-Risk-Variante priorisiert Stabilität. Sie ist besonders interessant, wenn du Schwankungen reduzieren möchtest."
+        )
 
-    return df
+    if strategy_name == "Maximale Rendite":
+        suggestions.append(
+            "Die renditeorientierte Variante ist aggressiver und geht in der Regel mit höherem Risiko und stärkeren Schwankungen einher."
+        )
+
+    if top_weight > 0.45:
+        suggestions.append(
+            f"Die Position **{top_asset}** ist sehr dominant. Das erhöht das Klumpenrisiko. Eine breitere Streuung wäre stabiler."
+        )
+
+    if tech_weight < 0.15:
+        suggestions.append(
+            "Der Tech-Anteil ist eher niedrig. Eine moderate Beimischung von Tech-Werten oder einem Nasdaq-ETF könnte das Wachstumsprofil erhöhen."
+        )
+
+    if not has_world_etf:
+        suggestions.append(
+            "Ein breit gestreuter Welt-ETF könnte die Diversifikation verbessern und das Portfolio stabiler machen."
+        )
+
+    if crypto_weight == 0:
+        suggestions.append(
+            "Falls du chancenorientierter investieren möchtest, könnte eine kleine Krypto-Beimischung interessant sein."
+        )
+
+    if not suggestions:
+        suggestions.append(
+            "Die Struktur wirkt bereits recht ausgewogen. Hier wären eher kleinere Feinjustierungen sinnvoll."
+        )
+
+    return suggestions
 
 
-@st.cache_data(show_spinner=False)
-def load_prices(symbol, period, interval):
-    data = yf.download(
-        symbol,
-        period=period,
-        interval=interval,
-        auto_adjust=True,
-        progress=False
+def plot_pie(weights_series, title):
+    fig, ax = plt.subplots(figsize=(5.5, 5.5))
+    ax.pie(
+        weights_series.values,
+        labels=weights_series.index,
+        autopct="%1.1f%%",
+        startangle=90
     )
-
-    if data.empty:
-        return pd.Series(dtype=float)
-
-    close = data["Close"]
-
-    if isinstance(close, pd.DataFrame):
-        close = close.iloc[:, 0]
-
-    return close.dropna()
+    ax.axis("equal")
+    ax.set_title(title)
+    return fig
 
 
-def get_horizon_config(horizon):
-    configs = {
-        "1 Stunde": {"period": "7d", "interval": "60m", "bars": 1},
-        "Halber Tag": {"period": "7d", "interval": "60m", "bars": 4},
-        "1 Tag": {"period": "3mo", "interval": "1d", "bars": 1},
-        "1 Monat": {"period": "2y", "interval": "1d", "bars": 21},
-        "3 Monate": {"period": "3y", "interval": "1d", "bars": 63},
-        "6 Monate": {"period": "5y", "interval": "1d", "bars": 126},
-        "1 Jahr": {"period": "10y", "interval": "1d", "bars": 252},
-        "5 Jahre": {"period": "10y", "interval": "1wk", "bars": 260},
-        "10 Jahre": {"period": "20y", "interval": "1wk", "bars": 520},
-        "50 Jahre": {"period": "max", "interval": "1mo", "bars": 600},
-    }
-    return configs[horizon]
+# --------------------------------------------------
+# UI
+# --------------------------------------------------
+st.title("📊 Portfolio-Optimierer")
+st.write(
+    "Gib mehrere Assets ein und vergleiche drei Portfolio-Varianten: "
+    "**Gleichgewichtet**, **Minimales Risiko** und **Maximale Rendite**."
+)
+st.caption("Hinweis: Die Auswertung basiert auf historischen Kursdaten und ist keine Finanzberatung.")
 
-
-def analyze_symbol(symbol, name, asset_type, horizon):
-    cfg = get_horizon_config(horizon)
-    prices = load_prices(symbol, cfg["period"], cfg["interval"])
-
-    if prices.empty:
-        return None
-
-    bars = cfg["bars"]
-
-    if len(prices) < bars + 1:
-        return None
-
-    start_price = prices.iloc[-(bars + 1)]
-    end_price = prices.iloc[-1]
-
-    if start_price == 0:
-        return None
-
-    horizon_return_pct = (end_price / start_price - 1) * 100
-
-    interval_returns = prices.pct_change().dropna()
-    if interval_returns.empty:
-        return None
-
-    volatility_pct = interval_returns.std() * 100
-
-    risk_return_score = horizon_return_pct / max(volatility_pct, 0.01)
-    safety_score = 100 / (1 + volatility_pct)
-    aggressive_score = horizon_return_pct + (0.35 * volatility_pct)
-
-    return {
-        "Name": name,
-        "Symbol": symbol,
-        "Asset-Klasse": asset_type,
-        "Startkurs": float(start_price),
-        "Letzter Kurs": float(end_price),
-        "Rendite %": float(horizon_return_pct),
-        "Volatilität %": float(volatility_pct),
-        "Risiko-Rendite-Score": float(risk_return_score),
-        "Sicherheits-Score": float(safety_score),
-        "Aggressiv-Score": float(aggressive_score),
-    }
-
-
-def sort_results(df, goal):
-    if goal == "Höchste Rendite":
-        return df.sort_values(["Rendite %", "Risiko-Rendite-Score"], ascending=[False, False])
-
-    if goal == "Höchste Sicherheit":
-        return df.sort_values(["Sicherheits-Score", "Rendite %"], ascending=[False, False])
-
-    if goal == "Bestes Risiko-Rendite-Verhältnis":
-        return df.sort_values(["Risiko-Rendite-Score", "Rendite %"], ascending=[False, False])
-
-    if goal == "Hohe Rendite bei hohem Risiko":
-        return df.sort_values(["Aggressiv-Score", "Rendite %"], ascending=[False, False])
-
-    return df
-
-
-try:
-    universe = load_universe()
-except FileNotFoundError:
-    st.error("Die Datei data/tr_universe_de.csv wurde nicht gefunden.")
-    st.stop()
-
-required_cols = {"symbol", "name", "isin", "asset_type", "source", "traderepublic_de"}
-if not required_cols.issubset(universe.columns):
-    st.error("tr_universe_de.csv braucht die Spalten: symbol, name, isin, asset_type, source, traderepublic_de")
-    st.stop()
-
-
-with st.sidebar:
-    st.header("Filter")
-
-    asset_type_options = ["Alle"] + sorted(universe["asset_type"].dropna().unique().tolist())
-    selected_asset_type = st.selectbox("Asset-Klasse", asset_type_options)
-
-    search_query = st.text_input(
-        "Name oder Ticker oder ISIN suchen",
-        placeholder="z. B. Apple, Nvidia, BYD, BTC, US0378331005"
-    )
-
-    selected_horizon = st.selectbox(
-        "Zeitraum",
-        [
-            "1 Stunde",
-            "Halber Tag",
-            "1 Tag",
-            "1 Monat",
-            "3 Monate",
-            "6 Monate",
-            "1 Jahr",
-            "5 Jahre",
-            "10 Jahre",
-            "50 Jahre"
-        ]
-    )
-
-    selected_goal = st.selectbox(
-        "Ziel",
-        [
-            "Höchste Rendite",
-            "Höchste Sicherheit",
-            "Bestes Risiko-Rendite-Verhältnis",
-            "Hohe Rendite bei hohem Risiko"
-        ]
-    )
-
-    ranking_button = st.button("Ranking berechnen")
-
-
-filtered = universe.copy()
-
-if selected_asset_type != "Alle":
-    filtered = filtered[filtered["asset_type"] == selected_asset_type]
-
-if search_query:
-    q = search_query.strip().lower()
-    filtered = filtered[
-        filtered["name"].str.lower().str.contains(q, na=False)
-        | filtered["symbol"].str.lower().str.contains(q, na=False)
-        | filtered["isin"].fillna("").str.lower().str.contains(q, na=False)
-    ]
-
-st.subheader("Trefferliste")
-
-if filtered.empty:
-    st.warning("Keine passenden Assets gefunden.")
-    st.stop()
-
-display_filtered = filtered[["name", "symbol", "isin", "asset_type", "source"]].rename(
-    columns={
-        "name": "Name",
-        "symbol": "Symbol",
-        "isin": "ISIN",
-        "asset_type": "Asset-Klasse",
-        "source": "Quelle"
-    }
+assets_input = st.text_area(
+    "Assets eingeben (ein Wert pro Zeile, z. B. Nvidia, Amazon, Bitcoin, MSCI World)",
+    value="Nvidia\nAmazon\nBitcoin",
+    height=150
 )
 
-st.dataframe(display_filtered, use_container_width=True, hide_index=True)
-st.caption("Zur Geschwindigkeit werden aktuell maximal 15 Treffer gleichzeitig bewertet.")
+investment = st.number_input(
+    "Gesamtbetrag in €",
+    min_value=100.0,
+    value=10000.0,
+    step=500.0
+)
 
-if ranking_button:
-    candidates = filtered.head(15)
+period = st.selectbox(
+    "Historische Datenbasis",
+    ["1y", "3y", "5y"],
+    index=1
+)
 
-    with st.spinner("Marktdaten werden geladen und bewertet..."):
-        results = []
+if st.button("Portfolio berechnen", use_container_width=True):
+    raw_assets = [a.strip() for a in assets_input.splitlines() if a.strip()]
 
-        for _, row in candidates.iterrows():
-            analyzed = analyze_symbol(
-                symbol=row["symbol"],
-                name=row["name"],
-                asset_type=row["asset_type"],
-                horizon=selected_horizon
-            )
-
-            if analyzed is not None:
-                results.append(analyzed)
-
-    if not results:
-        st.error("Für die aktuelle Auswahl konnten keine auswertbaren Marktdaten geladen werden.")
+    if len(raw_assets) < 2:
+        st.warning("Bitte gib mindestens 2 Assets ein.")
         st.stop()
 
-    results_df = pd.DataFrame(results)
-    results_df = sort_results(results_df, selected_goal).reset_index(drop=True)
+    resolution = resolve_assets(raw_assets)
+    resolved_assets = resolution["resolved"]
+    unresolved_assets = resolution["unresolved"]
 
-    best = results_df.iloc[0]
+    if unresolved_assets:
+        st.warning(
+            "Diese Eingaben konnten nicht eindeutig erkannt werden: "
+            + ", ".join(unresolved_assets)
+        )
 
-    st.subheader("Bestes Asset nach deinem Filter")
-    st.success(f"{best['Name']} ({best['Symbol']}) — {best['Asset-Klasse']}")
 
-    st.write(f"**Zeitraum:** {selected_horizon}")
-    st.write(f"**Ziel:** {selected_goal}")
-    st.write(f"**Rendite:** {best['Rendite %']:.2f}%")
-    st.write(f"**Volatilität:** {best['Volatilität %']:.2f}%")
-    st.write(f"**Risiko-Rendite-Score:** {best['Risiko-Rendite-Score']:.2f}")
-    st.write(f"**Sicherheits-Score:** {best['Sicherheits-Score']:.2f}")
+    if len(resolved_assets) < 2:
+        st.error("Es müssen mindestens 2 gültige Assets erkannt werden.")
+        st.stop()
 
-    ranking_display = results_df.copy()
+    with st.spinner("Marktdaten werden geladen und Portfolios berechnet..."):
+        prices = download_close_prices(resolved_assets, period=period)
 
-    for col in [
-        "Startkurs",
-        "Letzter Kurs",
-        "Rendite %",
-        "Volatilität %",
-        "Risiko-Rendite-Score",
-        "Sicherheits-Score",
-        "Aggressiv-Score",
-    ]:
-        ranking_display[col] = ranking_display[col].map(lambda x: f"{x:.2f}")
+    if prices.empty:
+        st.error("Für die eingegebenen Assets konnten keine Kursdaten geladen werden.")
+        st.stop()
 
-    st.subheader("Ranking")
-    st.dataframe(ranking_display, use_container_width=True, hide_index=True)
+    valid_assets = [a for a in resolved_assets if a in prices.columns]
+    invalid_assets = [a for a in resolved_assets if a not in valid_assets]
+
+    if invalid_assets:
+        st.warning(
+            "Diese Assets konnten bei yfinance nicht verarbeitet werden und wurden ignoriert: "
+            + ", ".join(invalid_assets)
+        )
+
+    if len(valid_assets) < 2:
+        st.error("Es müssen mindestens 2 gültige Assets übrig bleiben.")
+        st.stop()
+
+    prices = prices[valid_assets].copy()
+    prices = prices.dropna(axis=1, how="all")
+    prices = prices.ffill()
+
+    returns = prices.pct_change(fill_method=None).dropna(how="all")
+    returns = returns.loc[:, returns.notna().any()]
+
+    if returns.empty or len(returns.columns) < 2:
+        st.error("Es konnten keine Renditen berechnet werden.")
+        st.stop()
+
+    asset_names = list(returns.columns)
+    n_assets = len(asset_names)
+
+    mean_annual = returns.mean().values * 252
+    cov_annual = returns.cov().values * 252
+
+    # 1) Gleichgewichtet
+    equal_weights = np.array([1 / n_assets] * n_assets)
+    eq_return, eq_vol, eq_sharpe = compute_portfolio_metrics(equal_weights, mean_annual, cov_annual)
+
+    # 2) Simulation für min Risk / max Return
+    sim_df = simulate_portfolios(returns, n_portfolios=12000)
+
+    min_risk_row = sim_df.sort_values("vol", ascending=True).iloc[0]
+    max_return_row = sim_df.sort_values("return", ascending=False).iloc[0]
+
+    min_risk_weights = np.array([min_risk_row[a] for a in asset_names])
+    max_return_weights = np.array([max_return_row[a] for a in asset_names])
+
+    mr_return, mr_vol, mr_sharpe = compute_portfolio_metrics(min_risk_weights, mean_annual, cov_annual)
+    mx_return, mx_vol, mx_sharpe = compute_portfolio_metrics(max_return_weights, mean_annual, cov_annual)
+
+    comparison_df = pd.DataFrame([
+        {
+            "Strategie": "Gleichgewichtet",
+            "Erwartete Jahresrendite": percent(eq_return),
+            "Jahresvolatilität": percent(eq_vol),
+            "Sharpe Ratio": f"{eq_sharpe:.2f}",
+        },
+        {
+            "Strategie": "Minimales Risiko",
+            "Erwartete Jahresrendite": percent(mr_return),
+            "Jahresvolatilität": percent(mr_vol),
+            "Sharpe Ratio": f"{mr_sharpe:.2f}",
+        },
+        {
+            "Strategie": "Maximale Rendite",
+            "Erwartete Jahresrendite": percent(mx_return),
+            "Jahresvolatilität": percent(mx_vol),
+            "Sharpe Ratio": f"{mx_sharpe:.2f}",
+        },
+    ])
+
+    st.divider()
+    st.subheader("Vergleich der drei Portfolio-Varianten")
+    st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+
+    tabs = st.tabs(["Gleichgewichtet", "Minimales Risiko", "Maximale Rendite"])
+
+    strategy_payload = [
+        ("Gleichgewichtet", equal_weights, eq_return, eq_vol, eq_sharpe),
+        ("Minimales Risiko", min_risk_weights, mr_return, mr_vol, mr_sharpe),
+        ("Maximale Rendite", max_return_weights, mx_return, mx_vol, mx_sharpe),
+    ]
+
+    for tab, payload in zip(tabs, strategy_payload):
+        strategy_name, weights, ann_return, ann_vol, sharpe = payload
+        weights_series = pd.Series(weights, index=asset_names).sort_values(ascending=False)
+
+        with tab:
+            c1, c2 = st.columns([1, 1])
+
+            with c1:
+                st.subheader("Gewichtung")
+                st.dataframe(
+                    weight_table(asset_names, weights, investment),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            with c2:
+                st.subheader("Verteilung")
+                fig = plot_pie(weights_series, strategy_name)
+                st.pyplot(fig)
+
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Erwartete Jahresrendite", percent(ann_return))
+            k2.metric("Jahresvolatilität", percent(ann_vol))
+            k3.metric("Sharpe Ratio", f"{sharpe:.2f}")
+
+            st.subheader("Prognose des Portfoliowerts")
+            horizons = [1, 3, 5, 10]
+            projection_df = pd.DataFrame({
+                "Zeitraum": [f"{h} Jahr(e)" for h in horizons],
+                "Portfoliowert": [euro(project_capital(investment, ann_return, h)) for h in horizons]
+            })
+            st.dataframe(projection_df, use_container_width=True, hide_index=True)
+
+            chart_df = pd.DataFrame({
+                "Jahre": horizons,
+                "Portfoliowert": [project_capital(investment, ann_return, h) for h in horizons]
+            }).set_index("Jahre")
+            st.line_chart(chart_df)
+
+            st.subheader("Kurzinterpretation")
+            st.write(
+                f"Die Variante **{strategy_name}** erzielt auf Basis der historischen Daten "
+                f"eine geschätzte Jahresrendite von **{percent(ann_return)}** bei einer "
+                f"Volatilität von **{percent(ann_vol)}**."
+            )
+
+            st.subheader("Mögliche Ergänzungen / Empfehlungen")
+            recommendations = generate_recommendations(strategy_name, weights_series)
+            for i, rec in enumerate(recommendations, start=1):
+                st.write(f"**{i}.** {rec}")
